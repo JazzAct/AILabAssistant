@@ -89,22 +89,6 @@ Repeats until goal achieved
 
 ---
 
-## 🖥️ Live Transparency Dashboard
-
-The dashboard displays every action the AI takes in real time:
-
-- Agent reasoning
-- File reads/writes
-- Build output
-- Flashing progress
-- Serial monitor logs
-- Debugging judgments
-- Final success/failure state
-
-This allows users to observe and trust the autonomous workflow.
-
----
-
 ## 🛠️ Built With
 
 - React
