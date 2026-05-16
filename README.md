@@ -1,2 +1,2 @@
-# AILabAssistant
+# AILabPartner
 NVIDIA HACKATHON
