@@ -554,8 +554,8 @@ export default function App() {
         *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
         :root {
-          --sidebar-w: 250px;
-          --panel-w: 320px;
+          --sidebar-w: 320px;
+          --panel-w: 480px;
           --radius-lg: 16px;
           --radius-md: 12px;
           --radius-sm: 8px;
@@ -575,10 +575,11 @@ export default function App() {
         }
 
         html, body, #root {
-          width: 100%;
-          height: 100%;
-          margin: 0;
-          padding: 0;
+          width: 100vw !important;
+          height: 100vh !important;
+          max-width: none !important;
+          margin: 0 !important;
+          padding: 0 !important;
           overflow: hidden;
           background: var(--bg);
           font-family: var(--font);
@@ -586,8 +587,26 @@ export default function App() {
           -webkit-font-smoothing: antialiased;
         }
 
+        body {
+          display: block !important;
+          place-items: unset !important;
+          align-items: stretch !important;
+          justify-content: stretch !important;
+        }
+
         button, textarea, input { font-family: inherit; }
-        .app { display: flex; width: 100vw; height: 100vh; overflow: hidden; background: var(--bg); }
+        .app {
+          display: flex;
+          width: 100vw !important;
+          height: 100vh !important;
+          max-width: none !important;
+          margin: 0 !important;
+          padding: 0 !important;
+          overflow: hidden;
+          background: var(--bg);
+          border-radius: 0;
+          box-shadow: none;
+        }
 
         .sidebar {
           width: var(--sidebar-w);
@@ -710,7 +729,16 @@ export default function App() {
         .conn-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text3); flex-shrink: 0; transition: background 0.3s; }
         .conn-dot.on { background: var(--accent2); box-shadow: 0 0 6px var(--accent2); }
 
-        .main { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); position: relative; }
+        .main {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          min-width: 0;
+          width: 100%;
+          max-width: none;
+          background: var(--bg);
+          position: relative;
+        }
 
         .titlebar {
           display: flex;
@@ -748,12 +776,33 @@ export default function App() {
         .tb-right { display: flex; align-items: center; gap: 6px; }
         .conn-badge { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text3); background: var(--bg2); border: 1px solid var(--border); padding: 3px 8px; border-radius: 20px; }
 
-        .msgs { flex: 1; overflow-y: auto; padding: 12px 24px 12px; display: flex; flex-direction: column; gap: 16px; scroll-behavior: smooth; }
+        .msgs {
+          flex: 1;
+          width: 100%;
+          max-width: none;
+          overflow-y: auto;
+          padding: 18px 48px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 18px;
+          scroll-behavior: smooth;
+        }
         .empty-chat { flex: 1; display: flex; align-items: center; justify-content: center; color: var(--text3); font-size: 13px; text-align: center; padding: 24px; }
-        .row { display: flex; gap: 8px; align-items: flex-end; width: 100%; }
+        .row {
+          display: flex;
+          gap: 8px;
+          align-items: flex-end;
+          width: min(100%, 900px);
+        }
         .row.u { flex-direction: row-reverse; }
         .row.sys { justify-content: center; }
-        .msg-wrap { max-width: min(78%, 760px); display: flex; flex-direction: column; align-items: flex-start; }
+        .msg-wrap {
+          max-width: min(96%, 1400px);
+          display: flex;
+          flex-direction: column;
+          align-items: flex-start;
+        }
         .row.u .msg-wrap { align-items: flex-end; }
 
         .av { width: 28px; height: 28px; border-radius: 8px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 700; letter-spacing: 0.02em; }
@@ -761,7 +810,14 @@ export default function App() {
         .av.me { background: var(--bg3); border: 1px solid var(--border); color: var(--text2); }
 
         .bbl { width: fit-content; max-width: 100%; border-radius: 16px; padding: 10px 14px; font-size: 13.5px; line-height: 1.6; word-break: break-word; }
-        .bbl.ai { background: var(--bg2); border: 1px solid var(--border); color: var(--text); border-bottom-left-radius: 4px; }
+        .bbl.ai { width: 100%; }
+        .bbl.ai {
+          width: 100%;
+          background: var(--bg2);
+          border: 1px solid var(--border);
+          color: var(--text);
+          border-bottom-left-radius: 4px;
+        }
         .bbl.me { background: var(--accent); color: #fff; border-bottom-right-radius: 4px; box-shadow: 0 2px 10px rgba(10, 132, 255, 0.3); }
         .bbl.sys { background: var(--bg2); border: 1px solid var(--border); color: var(--text3); font-size: 11.5px; border-radius: 8px; padding: 4px 10px; }
         .bbl.err { background: rgba(255, 69, 58, 0.12); border: 1px solid rgba(255, 69, 58, 0.25); color: #ff453a; }
@@ -808,7 +864,7 @@ export default function App() {
         .chip-view { color: var(--accent); font-size: 11px; opacity: 0.7; }
         .chip-x { color: var(--text3); font-size: 14px; line-height: 1; }
 
-        .inp-wrap { padding: 10px 16px 28px; flex-shrink: 0; border-top: 1px solid var(--border); background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+        .inp-wrap { padding: 12px 48px 24px; flex-shrink: 0; border-top: 1px solid var(--border); background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
         .inp-box { display: flex; align-items: flex-end; gap: 6px; background: var(--bg2); border: 1.5px solid var(--border); border-radius: var(--radius-lg); padding: 7px 7px 7px 12px; transition: border-color 0.15s, box-shadow 0.15s; }
         .inp-box:focus-within { border-color: rgba(10, 132, 255, 0.5); box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.1); }
         textarea.ti { flex: 1; border: none; background: transparent; outline: none; resize: none; font-size: 13.5px; line-height: 1.5; color: var(--text); max-height: 130px; min-height: 22px; overflow-y: auto; }
@@ -832,10 +888,11 @@ export default function App() {
 
         @media (max-width: 768px) {
           :root { --sidebar-w: 220px; --panel-w: 260px; }
-          .msgs { padding: 8px 14px 8px; }
+          .msgs { padding: 12px 14px; }
           .titlebar { padding: 8px 12px; }
-          .inp-wrap { padding: 10px 12px 28px; }
-          .msg-wrap { max-width: 84%; }
+          .inp-wrap { padding: 10px 14px 20px; }
+          .msg-wrap { max-width: 92%; }
+          .inp-wrap { padding: 10px 14px 20px; }
         }
 
         @media (max-width: 560px) {
