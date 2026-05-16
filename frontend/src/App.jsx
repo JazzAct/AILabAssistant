@@ -2,6 +2,14 @@ import React, { useEffect, useRef, useState } from 'react'
 
 const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:3001'
 
+function ThinkingIndicator() {
+  return (
+    <div className="thinking">
+      <span className="dot" /><span className="dot" /><span className="dot" />
+    </div>
+  )
+}
+
 export default function App() {
   const ws = useRef(null)
   const [connected, setConnected] = useState(false)
@@ -10,15 +18,18 @@ export default function App() {
   const [pendingApproval, setPendingApproval] = useState(null)
   const [agentStarted, setAgentStarted] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [thinking, setThinking] = useState(false)
   const [chatModel, setChatModel] = useState(null)
   const fileRef = useRef(null)
-  const [attachments, setAttachments] = useState([]) // {file, preview, type, previewText}
+  const [attachments, setAttachments] = useState([])
   const messagesRef = useRef(null)
   const [openFile, setOpenFile] = useState(null)
+  const textareaRef = useRef(null)
 
   function pushEvent(type, payload) {
-    const text = typeof payload === 'string' ? payload : (payload && payload.message) ? payload.message : JSON.stringify(payload)
+    const text = typeof payload === 'string' ? payload : (payload?.message ?? JSON.stringify(payload))
     setMessages(prev => [...prev, { sender: 'assistant', type, text, ts: Date.now() }])
+    setThinking(false)
   }
 
   function send(msg) {
@@ -35,85 +46,63 @@ export default function App() {
   useEffect(() => {
     if (!messagesRef.current) return
     messagesRef.current.scrollTop = messagesRef.current.scrollHeight
-  }, [messages, input, attachments])
+  }, [messages, thinking, attachments])
+
   useEffect(() => {
     const socket = new WebSocket(WS_URL)
     ws.current = socket
-
     socket.onopen = () => {
       setConnected(true)
-      pushEvent('SYSTEM', 'Connected to server')
-      // flush queued messages
+      pushEvent('SYSTEM', 'Connected — send a goal to begin.')
       if (ws.current?.__sendQueue?.length) {
         ws.current.__sendQueue.forEach(m => ws.current.send(JSON.stringify(m)))
         ws.current.__sendQueue = []
       }
     }
-
     socket.onmessage = (e) => {
       let msg
-      try { msg = JSON.parse(e.data) } catch (err) { msg = { type: 'RAW', message: e.data } }
-
-      // high-frequency serial lines handled separately
-      if (msg.type === 'SERIAL_LINE') {
-        pushEvent('SERIAL_LINE', msg.data)
-        return
-      }
-
-      if (msg.type === 'AWAITING_APPROVAL') {
-        setPendingApproval(msg)
-      }
-
-      if (msg.model) {
-        setChatModel(msg.model)
-      }
-
-      // For simple servers that send back an object with `message`
+      try { msg = JSON.parse(e.data) } catch { msg = { type: 'RAW', message: e.data } }
+      if (msg.type === 'SERIAL_LINE') { pushEvent('SERIAL_LINE', msg.data); return }
+      if (msg.type === 'AWAITING_APPROVAL') setPendingApproval(msg)
+      if (msg.model) setChatModel(msg.model)
+      if (msg.type === 'THINKING') return
       pushEvent(msg.type || 'MSG', msg.message || JSON.stringify(msg))
     }
-
     socket.onclose = () => {
       setConnected(false)
-      pushEvent('SYSTEM', 'Socket closed — attempting reconnect...')
-      // try to reconnect after a short delay
+      pushEvent('SYSTEM', 'Disconnected — reconnecting…')
       setTimeout(() => {
-        if (!ws.current || ws.current.readyState === WebSocket.CLOSED) {
-          const next = new WebSocket(WS_URL)
-          ws.current = next
-        }
+        if (!ws.current || ws.current.readyState === WebSocket.CLOSED)
+          ws.current = new WebSocket(WS_URL)
       }, 2000)
     }
-
     socket.onerror = () => pushEvent('ERROR', 'WebSocket error')
-
     return () => socket.close()
   }, [])
 
-  function handleSubmit(e) {
-    e.preventDefault()
+  async function handleSubmit(e) {
+    e?.preventDefault()
     const hasText = input.trim().length > 0
     if (!hasText && attachments.length === 0) return
     const text = input.trim()
+
     if (hasText) {
       setMessages(prev => [...prev, { sender: 'user', text, ts: Date.now() }])
       setInput('')
+      setThinking(true)
+      if (textareaRef.current) { textareaRef.current.style.height = 'auto' }
     } else {
-      // file-only send: show filenames as the user's message
-      const names = attachments.map(a => a.file.name).join(', ')
-      setMessages(prev => [...prev, { sender: 'user', text: `Sent files: ${names}`, ts: Date.now() }])
+      setMessages(prev => [...prev, { sender: 'user', text: attachments.map(a => a.file.name).join(', '), ts: Date.now() }])
     }
 
-    // If attachments exist, upload them together with the prompt to /api/debug
-    const doUpload = async () => {
-      if (attachments.length === 0) return null
+    if (attachments.length > 0) {
       const fd = new FormData()
-      let combinedCode = ''
+      let code = ''
       for (const a of attachments) {
         if (a.type === 'image') fd.append('image', a.file)
-        else combinedCode += `\n// ---- ${a.file.name} ----\n${a.file ? await a.file.text() : ''}\n`
+        else code += `\n// ---- ${a.file.name} ----\n${a.file ? await a.file.text() : ''}\n`
       }
-      if (combinedCode) fd.append('code', combinedCode)
-      // pass the prompt as `components` so backend gets context
+      if (code) fd.append('code', code)
       fd.append('components', text)
       try {
         setUploading(true)
@@ -128,158 +117,253 @@ export default function App() {
       }
     }
 
-    // Send START_AGENT / USER_PROMPT over websocket when there's text.
-    // If this is a file-only send, notify the agent with a USER_ATTACHMENT event.
     if (hasText) {
-      if (!agentStarted) {
-        send({ type: 'START_AGENT', payload: { goal: text } })
-        setAgentStarted(true)
-      } else {
-        send({ type: 'USER_PROMPT', payload: { text } })
-      }
+      if (!agentStarted) { send({ type: 'START_AGENT', payload: { goal: text } }); setAgentStarted(true) }
+      else send({ type: 'USER_PROMPT', payload: { text } })
     } else {
-      // Informational: list filenames sent. Backend may ignore if not needed.
-      try { send({ type: 'USER_ATTACHMENT', payload: { files: attachments.map(a => a.file.name) } }) } catch (err) { /* ignore */ }
+      try { send({ type: 'USER_ATTACHMENT', payload: { files: attachments.map(a => a.file.name) } }) } catch { }
     }
-
-    // Fire-and-forget upload (wait for it)
-    doUpload()
   }
 
-  function approveFlash() {
-    send({ type: 'APPROVE_FLASH' })
-    setPendingApproval(null)
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSubmit() }
   }
+
+  function approveFlash() { send({ type: 'APPROVE_FLASH' }); setPendingApproval(null) }
 
   async function handleFileChange(e) {
     const files = Array.from(e.target.files || [])
-    if (files.length === 0) return
-
+    if (!files.length) return
     const next = []
     for (const file of files) {
-      if (file.type && file.type.startsWith('image/')) {
-        const dataUrl = await readFileAsDataURL(file)
+      if (file.type?.startsWith('image/')) {
+        const dataUrl = await new Promise((res, rej) => {
+          const fr = new FileReader(); fr.onload = () => res(fr.result); fr.onerror = rej; fr.readAsDataURL(file)
+        })
         next.push({ file, preview: dataUrl, type: 'image' })
       } else {
-        let text = ''
-        try { text = await file.text() } catch (err) { text = '' }
-        const preview = text ? text.slice(0, 800) : '(binary file)'
-        next.push({ file, preview: null, type: 'code', previewText: preview })
+        let text = ''; try { text = await file.text() } catch { }
+        next.push({ file, preview: null, type: 'code', previewText: text.slice(0, 800) || '(binary)' })
       }
     }
-
-    // append to attachments state (do not send yet)
     setAttachments(prev => [...prev, ...next])
-    // clear input
     e.target.value = ''
   }
 
-  function readFileAsDataURL(file) {
-    return new Promise((res, rej) => {
-      const fr = new FileReader()
-      fr.onload = () => res(fr.result)
-      fr.onerror = rej
-      fr.readAsDataURL(file)
-    })
+  function labelType(type) {
+    if (!type || type === 'MSG') return null
+    return type.replace(/_/g, ' ').toLowerCase().replace(/^\w/, c => c.toUpperCase())
   }
 
+  const canSend = !uploading && (input.trim().length > 0 || attachments.length > 0)
+
   return (
-    <div className="app">
-      <div className="app-header">
-        <div className="logo">AI</div>
-        <div>
-          <h1>AI Lab Partner</h1>
-          <div className="subtitle">Interactive agent — ask a goal and follow the loop</div>
-        </div>
-      </div>
+    <>
+      <style>{`
+        *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+        body{font-family:'Inter','SF Pro Text',system-ui,sans-serif;background:#eef4ff;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+        .shell{display:flex;flex-direction:column;height:calc(100vh - 48px);width:min(100%,780px);margin:0 auto;background:#fff;border:1px solid #dbeafe;border-radius:18px;box-shadow:0 18px 60px rgba(37,99,235,.12);overflow:hidden}
 
-      <div style={{marginTop:12}}>
-        <div className="status">
-          Status: {connected ? 'connected' : 'disconnected'}
-          {chatModel ? ` | ${chatModel.model}${chatModel.configured ? '' : ' (missing API key)'}` : ''}
-        </div>
+        /* header */
+        .hdr{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid #e0edff;background:#fff;flex-shrink:0}
+        .hdr-icon{width:34px;height:34px;border-radius:9px;background:#2563eb;color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0}
+        .hdr-title{font-size:14px;font-weight:600;color:#0f2848;letter-spacing:-0.2px}
+        .hdr-sub{font-size:11px;color:#94b4cc;margin-top:1px}
+        .pill{margin-left:auto;display:flex;align-items:center;gap:5px;font-size:11px;color:#64748b;background:#f8fafc;border:1px solid #e2e8f0;padding:3px 9px;border-radius:20px;white-space:nowrap}
+        .pdot{width:6px;height:6px;border-radius:50%;background:#94a3b8;flex-shrink:0}
+        .pdot.on{background:#22c55e}
 
-        <div className="layout">
-          <div className="chat-main">
-            <div className="chat">
-              <div className="messages" ref={messagesRef}>
-                {messages.map((m,i) => (
-                  <div key={i} className={`message ${m.sender}`}>
-                    <div className="bubble">
-                      {m.file ? (
-                        <div>
-                          <strong>{m.sender === 'user' ? 'You' : (m.type || 'Assistant')}</strong>
-                          <div style={{marginTop:8}}>
-                            <img src={m.file} alt={m.text} style={{maxWidth:240,borderRadius:8,display:'block'}} />
-                            <div style={{marginTop:6,fontSize:12,color:'#6b7280'}}>{m.text}</div>
-                          </div>
-                        </div>
-                      ) : (
-                        m.text && (m.text.trim().startsWith('{') || m.text.trim().startsWith('[')) ? (
-                          <div><strong>{m.sender === 'user' ? 'You' : (m.type || 'Assistant')}</strong><pre style={{whiteSpace:'pre-wrap',marginTop:6}}>{m.text}</pre></div>
-                        ) : (
-                          <div><strong>{m.sender === 'user' ? 'You' : (m.type || 'Assistant')}</strong><div style={{marginTop:6}}>{m.text}</div></div>
-                        )
-                      )}
-                      <div className="meta">{new Date(m.ts).toLocaleTimeString()}</div>
-                    </div>
-                  </div>
-                ))}
-              </div>
+        /* messages */
+        .msgs{flex:1;overflow-y:auto;padding:22px 24px 6px;display:flex;flex-direction:column;gap:14px;scroll-behavior:smooth}
+        .msgs::-webkit-scrollbar{width:4px}
+        .msgs::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px}
 
-              {pendingApproval && (
-                <div style={{marginTop:8}} className="uploader">
-                  <div style={{marginBottom:6}}>Agent requests approval: <strong>{pendingApproval.action || pendingApproval.type}</strong></div>
-                  <button className="btn primary" onClick={approveFlash}>Approve</button>
-                </div>
-              )}
+        /* rows */
+        .row{display:flex;gap:9px;align-items:flex-end;width:100%}
+        .row.u{flex-direction:row-reverse;justify-content:flex-start}
+        .row.sys{justify-content:center}
+        .msg-wrap{width:min(72%,560px);display:flex;flex-direction:column;align-items:flex-start}
+        .row.u .msg-wrap{align-items:flex-end}
 
-              {/* attachments row above prompt */}
-              {attachments.length > 0 && (
-                <div className="attachments-row">
-                  {attachments.map((a, idx) => (
-                    <div key={idx} className="attachment-chip">
-                      <button className="remove" onClick={() => setAttachments(prev => prev.filter((_,i)=>i!==idx))}>−</button>
-                      <div style={{maxWidth:200,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{a.file.name}</div>
-                      <div style={{flex:1}} />
-                      <button className="open" onClick={() => setOpenFile({ ...a, idx })}>Open</button>
-                    </div>
-                  ))}
-                </div>
-              )}
+        .av{width:26px;height:26px;border-radius:8px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700}
+        .av.ai{background:#dbeafe;color:#1d4ed8}
+        .av.me{background:#2563eb;color:#fff}
 
-              <div className="controls">
-                <div className="input-area">
-                  <button type="button" className="plus-btn" onClick={() => fileRef.current?.click()}>+</button>
-                  <form onSubmit={handleSubmit} style={{display:'flex',flex:1}}>
-                    <input value={input} onChange={e => setInput(e.target.value)} placeholder="Type a goal or prompt..." />
-                  </form>
-                  <button className="send-btn" onClick={handleSubmit}>Send</button>
-                </div>
-                <input ref={fileRef} type="file" accept=".c,.h,.cpp,.cc,.py,.m,.js,.ts,.json,.txt,.ino,.java,.rs,.go,.sh,image/*" multiple style={{display:'none'}} onChange={(e) => handleFileChange(e)} />
-              </div>
-            </div>
+        .bbl{width:fit-content;max-width:100%;border-radius:15px;padding:9px 13px;font-size:13.5px;line-height:1.6;word-break:break-word}
+        .bbl.ai{background:#f0f7ff;border:1px solid #dbeafe;color:#0f2848;border-bottom-left-radius:3px}
+        .bbl.me{background:#2563eb;color:#fff;border-bottom-right-radius:3px}
+        .bbl.sys{background:#f8fafc;border:1px solid #e2e8f0;color:#64748b;font-size:11.5px;border-radius:8px;padding:5px 11px}
+        .bbl.err{background:#fff1f2;border:1px solid #fecaca;color:#b91c1c}
+
+        .lbl{font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:#93b4d0;margin-bottom:2px}
+        .meta{font-size:10px;color:#b0c4d8;margin-top:3px;text-align:left}
+        .row.u .meta{text-align:right}
+
+        pre.code{font-family:'JetBrains Mono','Fira Code',monospace;font-size:11.5px;white-space:pre-wrap;background:rgba(0,0,0,0.04);border-radius:6px;padding:8px 10px;margin-top:5px;max-height:260px;overflow-y:auto}
+
+        /* thinking */
+        .thinking-row{display:flex;gap:9px;align-items:flex-end}
+        .thinking{display:flex;gap:4px;align-items:center;padding:9px 13px;background:#f0f7ff;border:1px solid #dbeafe;border-radius:15px;border-bottom-left-radius:3px}
+        .dot{width:6px;height:6px;border-radius:50%;background:#93c5fd;animation:bop 1.2s infinite ease-in-out}
+        .dot:nth-child(2){animation-delay:.2s}
+        .dot:nth-child(3){animation-delay:.4s}
+        @keyframes bop{0%,80%,100%{transform:translateY(0);opacity:.5}40%{transform:translateY(-5px);opacity:1}}
+
+        /* approval */
+        .appr{margin:0 20px;padding:10px 14px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;display:flex;align-items:center;gap:10px;font-size:12.5px;color:#78350f;flex-shrink:0}
+        .appr strong{flex:1}
+        .appr-btn{padding:5px 13px;background:#2563eb;color:#fff;border:none;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer}
+        .appr-btn:hover{background:#1d4ed8}
+
+        /* chips */
+        .chips{display:flex;flex-wrap:wrap;gap:5px;padding:8px 20px 0;flex-shrink:0}
+        .chip{display:flex;align-items:center;gap:5px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:20px;padding:3px 9px;font-size:11.5px;color:#1e40af;max-width:200px}
+        .chip-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+        .chip-view{background:none;border:none;color:#3b82f6;font-size:11px;cursor:pointer;padding:0;flex-shrink:0}
+        .chip-x{background:none;border:none;color:#93c5fd;font-size:14px;line-height:1;cursor:pointer;padding:0;flex-shrink:0;transition:color .15s}
+        .chip-x:hover{color:#ef4444}
+
+        /* input */
+        .inp-wrap{padding:10px 20px 18px;flex-shrink:0;border-top:1px solid #e0edff;background:#fff}
+        .inp-box{display:flex;align-items:flex-end;gap:7px;background:#f0f7ff;border:1.5px solid #bfdbfe;border-radius:13px;padding:7px 7px 7px 13px;transition:border-color .15s,box-shadow .15s}
+        .inp-box:focus-within{border-color:#2563eb;box-shadow:0 0 0 3px rgba(37,99,235,.1)}
+        textarea.ti{flex:1;border:none;background:transparent;outline:none;resize:none;font-size:13.5px;line-height:1.5;color:#0f2848;font-family:inherit;max-height:130px;min-height:22px;overflow-y:auto}
+        textarea.ti::placeholder{color:#94b4cc}
+        .att-btn{width:30px;height:30px;border:none;background:transparent;color:#94b4cc;font-size:20px;font-weight:300;border-radius:7px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,color .15s;flex-shrink:0}
+        .att-btn:hover{background:#dbeafe;color:#2563eb}
+        .snd-btn{width:32px;height:32px;border:none;border-radius:8px;background:#2563eb;color:#fff;font-size:14px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:background .15s,transform .1s;flex-shrink:0}
+        .snd-btn:hover:not(:disabled){background:#1d4ed8;transform:scale(1.05)}
+        .snd-btn:disabled{background:#93c5fd;cursor:not-allowed}
+
+        /* file panel */
+        .overlay{position:fixed;inset:0;background:rgba(10,25,55,.35);display:flex;align-items:center;justify-content:center;z-index:200;padding:24px}
+        .fpanel{background:#fff;border-radius:14px;border:1px solid #dbeafe;padding:18px;max-width:540px;width:100%;max-height:78vh;overflow-y:auto;box-shadow:0 16px 48px rgba(37,99,235,.14)}
+        .fpanel-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+        .fpanel-name{font-size:13px;font-weight:600;color:#0f2848}
+        .fpanel-close{background:none;border:none;color:#94b4cc;font-size:20px;cursor:pointer;padding:2px 6px;border-radius:6px;line-height:1;transition:background .15s}
+        .fpanel-close:hover{background:#f1f5f9;color:#64748b}
+        .fpanel pre{font-family:'JetBrains Mono',monospace;font-size:11.5px;white-space:pre-wrap;color:#0f2848;background:#f0f7ff;border-radius:8px;padding:11px;border:1px solid #dbeafe}
+        @media (max-width:720px){body{padding:0;align-items:stretch}.shell{height:100vh;width:100%;border:none;border-radius:0}.msg-wrap{width:82%}.msgs{padding:18px 16px 6px}}
+      `}</style>
+
+      <div className="shell">
+        {/* Header */}
+        <div className="hdr">
+          <div className="hdr-icon">AI</div>
+          <div>
+            <div className="hdr-title">AI Embedded Agent</div>
+            <div className="hdr-sub">Interactive code analysis agent</div>
           </div>
+          <div className="pill">
+            <span className={`pdot ${connected ? 'on' : ''}`} />
+            {connected ? 'Connected' : 'Offline'}
+            {chatModel?.model ? ` · ${chatModel.model}` : ''}
+          </div>
+        </div>
 
-          {openFile && (
-            <div style={{width:380}}>
-              <div className="file-panel">
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                  <strong>{openFile.file.name}</strong>
-                  <button className="btn ghost" onClick={() => setOpenFile(null)}>Close</button>
-                </div>
-                {openFile.type === 'image' ? (
-                  <img src={openFile.preview} alt={openFile.file.name} style={{maxWidth:'100%',borderRadius:6}} />
-                ) : (
-                  <pre>{openFile.previewText || '(no preview available)'}</pre>
-                )}
+        {/* Messages */}
+        <div className="msgs" ref={messagesRef}>
+          {messages.map((m, i) => {
+            const isSys = m.type === 'SYSTEM'
+            const isErr = m.type === 'ERROR'
+            const isUser = m.sender === 'user'
+            const isJSON = m.text?.trim().startsWith('{') || m.text?.trim().startsWith('[')
+            const label = labelType(m.type)
+
+            if (isSys) return (
+              <div key={i} className="row sys">
+                <div className="bbl sys">{m.text}</div>
               </div>
+            )
+
+            return (
+              <div key={i} className={`row ${isUser ? 'u' : ''}`}>
+                <div className={`av ${isUser ? 'me' : 'ai'}`}>{isUser ? 'U' : 'AI'}</div>
+                <div className="msg-wrap">
+                  {!isUser && label && <div className="lbl">{label}</div>}
+                  <div className={`bbl ${isUser ? 'me' : isErr ? 'err' : 'ai'}`}>
+                    {isJSON && !isUser ? <pre className="code">{m.text}</pre> : m.text}
+                  </div>
+                  <div className="meta">{new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+                </div>
+              </div>
+            )
+          })}
+
+          {thinking && (
+            <div className="thinking-row">
+              <div className="av ai">AI</div>
+              <ThinkingIndicator />
             </div>
           )}
         </div>
+
+        {/* Approval */}
+        {pendingApproval && (
+          <div className="appr">
+            <strong>Approval needed: {pendingApproval.action || pendingApproval.type}</strong>
+            <button className="appr-btn" onClick={approveFlash}>Approve</button>
+          </div>
+        )}
+
+        {/* Attachment chips */}
+        {attachments.length > 0 && (
+          <div className="chips">
+            {attachments.map((a, idx) => (
+              <div key={idx} className="chip">
+                <span className="chip-name">{a.file.name}</span>
+                <button className="chip-view" onClick={() => setOpenFile({ ...a, idx })}>view</button>
+                <button className="chip-x" onClick={() => setAttachments(prev => prev.filter((_, j) => j !== idx))}>×</button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Input */}
+        <div className="inp-wrap">
+          <div className="inp-box">
+            <button type="button" className="att-btn" onClick={() => fileRef.current?.click()} title="Attach file">+</button>
+            <textarea
+              ref={textareaRef}
+              className="ti"
+              rows={1}
+              value={input}
+              onChange={e => {
+                setInput(e.target.value)
+                e.target.style.height = 'auto'
+                e.target.style.height = Math.min(e.target.scrollHeight, 130) + 'px'
+              }}
+              onKeyDown={handleKeyDown}
+              placeholder="Type a goal or paste code… (Enter to send)"
+            />
+            <button className="snd-btn" onClick={handleSubmit} disabled={!canSend} title="Send">↑</button>
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".c,.h,.cpp,.cc,.py,.m,.js,.ts,.json,.txt,.ino,.java,.rs,.go,.sh,image/*"
+            multiple
+            style={{ display: 'none' }}
+            onChange={handleFileChange}
+          />
+        </div>
       </div>
-    </div>
+
+      {/* File panel overlay */}
+      {openFile && (
+        <div className="overlay" onClick={e => e.target === e.currentTarget && setOpenFile(null)}>
+          <div className="fpanel">
+            <div className="fpanel-hdr">
+              <span className="fpanel-name">{openFile.file.name}</span>
+              <button className="fpanel-close" onClick={() => setOpenFile(null)}>×</button>
+            </div>
+            {openFile.type === 'image'
+              ? <img src={openFile.preview} alt={openFile.file.name} style={{ maxWidth: '100%', borderRadius: 8 }} />
+              : <pre>{openFile.previewText || '(no preview)'}</pre>
+            }
+          </div>
+        </div>
+      )}
+    </>
   )
 }
-
-// Upload UI removed per request
