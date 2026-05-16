@@ -58,6 +58,7 @@ export function flashDevice(projectPath, port) {
  * Read from the serial port for `seconds` seconds.
  * Returns array of lines received.
  */
+
 export function readSerial(portPath, seconds = 5) {
   return new Promise((resolve, reject) => {
     const lines = [];
