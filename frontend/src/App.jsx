@@ -65,6 +65,7 @@ export default function App() {
       if (msg.type === 'SERIAL_LINE') { pushEvent('SERIAL_LINE', msg.data); return }
       if (msg.type === 'AWAITING_APPROVAL') setPendingApproval(msg)
       if (msg.model) setChatModel(msg.model)
+      if (msg.type === 'CONNECTED') return
       if (msg.type === 'THINKING') return
       pushEvent(msg.type || 'MSG', msg.message || JSON.stringify(msg))
     }
@@ -151,8 +152,72 @@ export default function App() {
   }
 
   function labelType(type) {
-    if (!type || type === 'MSG') return null
+    if (!type || type === 'MSG' || type === 'ASSISTANT_MESSAGE') return null
     return type.replace(/_/g, ' ').toLowerCase().replace(/^\w/, c => c.toUpperCase())
+  }
+
+  function renderMessageText(text, { isUser, isJSON }) {
+    if (isJSON && !isUser) return <pre className="code">{text}</pre>
+    if (isUser) return text
+
+    const blocks = []
+    let list = null
+
+    const flushList = () => {
+      if (!list) return
+      const Tag = list.type === 'number' ? 'ol' : 'ul'
+      blocks.push(<Tag key={`list-${blocks.length}`} className="md-list">{list.items}</Tag>)
+      list = null
+    }
+
+    for (const rawLine of String(text || '').split(/\r?\n/)) {
+      const line = rawLine.trim()
+      if (!line) {
+        flushList()
+        continue
+      }
+
+      const heading = line.match(/^\*\*(.+?)\*\*:?\s*$/)
+      if (heading) {
+        flushList()
+        blocks.push(<div key={`h-${blocks.length}`} className="md-heading">{heading[1]}</div>)
+        continue
+      }
+
+      const numbered = line.match(/^(\d+)[.)]\s+(.*)$/)
+      if (numbered) {
+        if (!list || list.type !== 'number') {
+          flushList()
+          list = { type: 'number', items: [] }
+        }
+        list.items.push(<li key={`li-${list.items.length}`}>{renderInline(numbered[2])}</li>)
+        continue
+      }
+
+      const bullet = line.match(/^[-*]\s+(.*)$/)
+      if (bullet) {
+        if (!list || list.type !== 'bullet') {
+          flushList()
+          list = { type: 'bullet', items: [] }
+        }
+        list.items.push(<li key={`li-${list.items.length}`}>{renderInline(bullet[1])}</li>)
+        continue
+      }
+
+      flushList()
+      blocks.push(<p key={`p-${blocks.length}`} className="md-p">{renderInline(line)}</p>)
+    }
+
+    flushList()
+    return <div className="md">{blocks}</div>
+  }
+
+  function renderInline(text) {
+    return String(text).split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean).map((part, idx) => {
+      if (part.startsWith('**') && part.endsWith('**')) return <strong key={idx}>{part.slice(2, -2)}</strong>
+      if (part.startsWith('`') && part.endsWith('`')) return <code key={idx}>{part.slice(1, -1)}</code>
+      return part
+    })
   }
 
   const canSend = !uploading && (input.trim().length > 0 || attachments.length > 0)
@@ -194,6 +259,13 @@ export default function App() {
         .bbl.me{background:#2563eb;color:#fff;border-bottom-right-radius:3px}
         .bbl.sys{background:#f8fafc;border:1px solid #e2e8f0;color:#64748b;font-size:11.5px;border-radius:8px;padding:5px 11px}
         .bbl.err{background:#fff1f2;border:1px solid #fecaca;color:#b91c1c}
+        .md{display:flex;flex-direction:column;gap:9px}
+        .md-heading{font-size:14px;font-weight:700;color:#0f2848;margin-top:2px}
+        .md-p{margin:0}
+        .md-list{margin:0;padding-left:20px;display:flex;flex-direction:column;gap:5px}
+        .md-list li{padding-left:2px}
+        .md strong{font-weight:700;color:#0b1f3a}
+        .md code{font-family:'JetBrains Mono','Fira Code',monospace;font-size:12px;background:#e6f0ff;border:1px solid #cfe1ff;border-radius:5px;padding:1px 5px;color:#1d4ed8}
 
         .lbl{font-size:10px;font-weight:600;letter-spacing:.5px;text-transform:uppercase;color:#93b4d0;margin-bottom:2px}
         .meta{font-size:10px;color:#b0c4d8;margin-top:3px;text-align:left}
@@ -282,7 +354,7 @@ export default function App() {
                 <div className="msg-wrap">
                   {!isUser && label && <div className="lbl">{label}</div>}
                   <div className={`bbl ${isUser ? 'me' : isErr ? 'err' : 'ai'}`}>
-                    {isJSON && !isUser ? <pre className="code">{m.text}</pre> : m.text}
+                    {renderMessageText(m.text, { isUser, isJSON })}
                   </div>
                   <div className="meta">{new Date(m.ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
                 </div>
