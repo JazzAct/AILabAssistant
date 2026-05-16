@@ -10,6 +10,7 @@ export default function App() {
   const [pendingApproval, setPendingApproval] = useState(null)
   const [agentStarted, setAgentStarted] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [chatModel, setChatModel] = useState(null)
   const fileRef = useRef(null)
   const [attachments, setAttachments] = useState([]) // {file, preview, type, previewText}
   const messagesRef = useRef(null)
@@ -61,6 +62,10 @@ export default function App() {
 
       if (msg.type === 'AWAITING_APPROVAL') {
         setPendingApproval(msg)
+      }
+
+      if (msg.model) {
+        setChatModel(msg.model)
       }
 
       // For simple servers that send back an object with `message`
@@ -189,7 +194,10 @@ export default function App() {
       </div>
 
       <div style={{marginTop:12}}>
-        <div className="status">Status: {connected ? 'connected' : 'disconnected'}</div>
+        <div className="status">
+          Status: {connected ? 'connected' : 'disconnected'}
+          {chatModel ? ` | ${chatModel.model}${chatModel.configured ? '' : ' (missing API key)'}` : ''}
+        </div>
 
         <div className="layout">
           <div className="chat-main">
